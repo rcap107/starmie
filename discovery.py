@@ -3,6 +3,10 @@ import numpy as np
 import pickle
 import torch
 import os
+from pathlib import Path
+
+
+from sdd.pretrain import load_checkpoint, inference_on_tables
 
 from sentence_transformers import SentenceTransformer
 from xgboost import XGBRegressor
@@ -28,7 +32,8 @@ def clean_table(table, target='Rating'):
     return table.dropna(subset=[target])
 
 
-lm = SentenceTransformer('paraphrase-MiniLM-L6-v2').to('cuda')
+lm = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+# lm = SentenceTransformer('paraphrase-MiniLM-L6-v2').to('cuda')
 lm.eval()
 
 def featurize(table, target='Rating'):
@@ -115,23 +120,25 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
 
 if __name__ == '__main__':
     # step 1: load columns and vectors
-    viznet_columns = pd.read_csv('data/viznet/test.csv.full')
+    case=  "yadl/binary_update"
+    base_path = Path("data/", case)
 
     # step 2: select data lake tables
     if os.path.exists('datalake_tables.pkl'):
+    # if False:
         tables, table_vectors = pickle.load(open('datalake_tables.pkl', 'rb'))
+        query_tables, query_vectors = pickle.load(open('query_tables.pkl', 'rb'))
     else:
         tables = {}
-        for table_id in tqdm(viznet_columns['table_id'], total=len(viznet_columns)):
+        tot = sum(1 for _ in base_path.glob("**/*.parquet"))
+        for t_path in tqdm(base_path.glob("**/*.parquet"), total=tot):
             # get table length
-            table = pd.read_csv('data/viznet/tables/table_%d.csv' % table_id)
+            table = pd.read_parquet(t_path)
             if len(table) >= 50:
-                tables[table_id] = table
+                tables[t_path.stem] = table
 
-        from sdd.pretrain import load_checkpoint, inference_on_tables
         table_vectors = {}
-        ckpt_path = "results/viznet/model_drop_col_head_column_0.pt"
-        # ckpt_path = "results/viznet/model_drop_col_head_128_0.pt"
+        ckpt_path = "results/%s/model_drop_col_head_column_0.pt" % case
         ckpt = torch.load(ckpt_path)
         table_model, table_dataset = load_checkpoint(ckpt)
         all_tables = list(tables.values())
@@ -140,53 +147,63 @@ if __name__ == '__main__':
             table_vectors[tid] = v
 
         pickle.dump((tables, table_vectors), open('datalake_tables.pkl', 'wb'))
+    
+        query_table_path = Path("data/source_tables/yadl/company_employees-yadl-depleted.parquet")  
+        query_table = pd.read_parquet(query_table_path)
+        query_tables = {
+            query_table_path.stem: query_table
+        }
+        query_vectors = {}
+        vectors = inference_on_tables(list(query_tables.values()), table_model, table_dataset)
+        for tid, v in zip(query_tables, vectors):
+            query_vectors[tid] = v
+        pickle.dump((query_tables, query_vectors), open('query_tables.pkl', 'wb'))
+
 
     # step 3: select query tables
-    query_tables = {}
+    to_query_tables = {}
     total_rows = 0
     for tid, table in tables.items():
-        if 'Rating' in table:
-            table = clean_table(table)
-            if len(table) >= 200:
-                query_tables[tid] = table
-                total_rows += len(table)
+        table = clean_table(table)
+        if len(table) >= 200:
+            to_query_tables[tid] = table
+            total_rows += len(table)
+
 
     # step 4: run each data discovery method
+    candidate_joins = {"cl":[], "jaccard": [], "overlap": []}
     for method in ['cl']:
     # for method in ['none', 'cl', 'jaccard', 'overlap']:
-        result_tables = {}
-
+        result_tables = []
         for tid_a in tqdm(query_tables):
             best_table = query_tables[tid_a]
             if method == 'none':
-                result_tables[tid_a] = best_table
+                candidate_joins[method][tid_a] = best_table
                 continue
 
             best_similarity = -1.0
             best_pair = None
-            table_a = tables[tid_a]
-            vectors_a = table_vectors[tid_a]
+            table_a = query_tables[tid_a]
+            vectors_a = query_vectors[tid_a]
 
             for tid_b in tables:
-                if tid_b in query_tables:
-                    continue
-                if tid_a != tid_b:
-                    table_b = tables[tid_b]
-                    vectors_b = table_vectors[tid_b]
+                table_b = tables[tid_b]
+                vectors_b = table_vectors[tid_b]
 
-                    res, similarity = check_table_pair(table_a, vectors_a,
-                                    table_b, vectors_b, method=method)
-                    if res is not None and similarity > best_similarity:
-                        best_similarity = similarity
-                        best_table = table_b
-                        best_pair = res
-
+                res, similarity = check_table_pair(table_a, vectors_a,
+                                table_b, vectors_b, method=method)
+                if res is not None and similarity > 0:
+                    candidate_joins[method].append({"cand_table": tid_b, "join_columns": res, "similarity": similarity})                    
+                
+                if res is not None and similarity > best_similarity:
+                    best_similarity = similarity
+                    best_table = table_b
+                    best_pair = res
+            candidates = pd.DataFrame().from_records(candidate_joins[method]).sort_values("similarity", ascending=False)
+            out_path = Path("results", case, "query-results_%s_%s.parquet"% (method, tid_a))
+            candidates.to_parquet(out_path, index=False)
+            # candidates.to_csv(out_path, index=False)
             if best_similarity >= 0:
-                table_b_tmp = best_table.drop_duplicates(subset=[best_pair[1]]).set_index(best_pair[1])
-                best_table = table_a.join(table_b_tmp, on=best_pair[0], rsuffix='_r')
-            else:
-                best_table = table_a
-            result_tables[tid_a] = best_table
-            # result_tables.append(best_table)
+                result_tables.append({"cand_table": best_table, "best_pair": best_pair, "similarity": best_similarity})
         pickle.dump(result_tables, open('%s_joined_tables.pkl' % method, 'wb'))
-        process_query_tables(result_tables)
+        # process_query_tables(result_tables)

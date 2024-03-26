@@ -30,6 +30,7 @@ if __name__ == '__main__':
     parser.add_argument("--sample_meth", type=str, default='head')
     # mlflow tag
     parser.add_argument("--mlflow_tag", type=str, default=None)
+    parser.add_argument("--table_extension", type=str, default=".csv")
 
     hp = parser.parse_args()
 
@@ -59,7 +60,7 @@ if __name__ == '__main__':
             path = 'data/table-union-search-benchmark/large/benchmark'
 
     else:
-        path = 'data/%s/tables' % hp.task
+        path = 'data/%s' % hp.task
     # trainset = PretrainTableDataset(path,
     #                      augment_op=hp.augment_op,
     #                      lm=hp.lm,
