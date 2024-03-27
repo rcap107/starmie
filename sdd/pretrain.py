@@ -36,7 +36,8 @@ def train_step(train_iter, model, optimizer, scheduler, scaler, hp):
         x_ori, x_aug, cls_indices = batch
         optimizer.zero_grad()
 
-        if hp.fp16:
+        if False:
+        # if hp.fp16:
             with torch.cuda.amp.autocast():
                 loss = model(x_ori, x_aug, cls_indices, mode='simclr')
                 scaler.scale(loss).backward()
@@ -74,7 +75,7 @@ def train(trainset, hp):
     # initialize model, optimizer, and LR scheduler
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     model = BarlowTwinsSimCLR(hp, device=device, lm=hp.lm)
-    model = model.cuda()
+    # model = model.cuda()
     optimizer = AdamW(model.parameters(), lr=hp.lr)
     if hp.fp16:
         scaler = torch.cuda.amp.GradScaler()
@@ -204,6 +205,8 @@ def load_checkpoint(ckpt):
         ds_path = 'data/table-union-search-benchmark/large/benchmark'
     elif hp.task == "wdc":
         ds_path = 'data/wdc/0'
+    else:
+        ds_path = 'data/%s' % hp.task
     dataset = PretrainTableDataset.from_hp(ds_path, hp)
 
     return model, dataset
