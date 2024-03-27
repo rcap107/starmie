@@ -123,11 +123,26 @@ if __name__ == '__main__':
     case=  "yadl/binary_update"
     base_path = Path("data/", case)
 
+    tables_data_path = Path(base_path, 'datalake_tables.pkl')
+    query_data_path = Path(base_path, 'query_tables.pkl')
+    
+    query_paths = [
+        "data/source_tables/yadl/company_employees-yadl-depleted.parquet",
+        "data/source_tables/yadl/housing_prices-yadl-depleted.parquet",
+        "data/source_tables/yadl/movies_vote-yadl-depleted.parquet",
+        "data/source_tables/yadl/movies-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_accidents-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_county_population-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_elections-yadl-depleted.parquet",
+    ]
+    query_paths = list(map(Path, query_paths))
+    
+    
     # step 2: select data lake tables
-    if os.path.exists('datalake_tables.pkl'):
+    if tables_data_path.exists():
     # if False:
-        tables, table_vectors = pickle.load(open('datalake_tables.pkl', 'rb'))
-        query_tables, query_vectors = pickle.load(open('query_tables.pkl', 'rb'))
+        tables, table_vectors = pickle.load(open(tables_data_path, 'rb'))
+        query_tables, query_vectors = pickle.load(open(query_data_path, 'rb'))
     else:
         tables = {}
         tot = sum(1 for _ in base_path.glob("**/*.parquet"))
@@ -142,68 +157,57 @@ if __name__ == '__main__':
         ckpt = torch.load(ckpt_path)
         table_model, table_dataset = load_checkpoint(ckpt)
         all_tables = list(tables.values())
-        vectors = inference_on_tables(all_tables, table_model, table_dataset)
-        for tid, v in zip(tables, vectors):
+        v_ = inference_on_tables(all_tables, table_model, table_dataset)
+        for tid, v in zip(tables, v_):
             table_vectors[tid] = v
 
-        pickle.dump((tables, table_vectors), open('datalake_tables.pkl', 'wb'))
-    
-        query_table_path = Path("data/source_tables/yadl/company_employees-yadl-depleted.parquet")  
-        query_table = pd.read_parquet(query_table_path)
-        query_tables = {
-            query_table_path.stem: query_table
-        }
+        pickle.dump((tables, table_vectors), open(tables_data_path, 'wb'))
+
+        query_tables = {}    
+        for query_table_path in query_paths:
+            if query_table_path.exists():
+                query_table = pd.read_parquet(query_table_path)
+                query_tables[query_table_path.stem] = query_table
         query_vectors = {}
-        vectors = inference_on_tables(list(query_tables.values()), table_model, table_dataset)
-        for tid, v in zip(query_tables, vectors):
+        v_ = inference_on_tables(list(query_tables.values()), table_model, table_dataset)
+        for tid, v in zip(query_tables, v_):
             query_vectors[tid] = v
-        pickle.dump((query_tables, query_vectors), open('query_tables.pkl', 'wb'))
-
-
-    # step 3: select query tables
-    to_query_tables = {}
-    total_rows = 0
-    for tid, table in tables.items():
-        table = clean_table(table)
-        if len(table) >= 200:
-            to_query_tables[tid] = table
-            total_rows += len(table)
+        pickle.dump((query_tables, query_vectors), open(query_data_path, 'wb'))
 
 
     # step 4: run each data discovery method
     candidate_joins = {"cl":[], "jaccard": [], "overlap": []}
     for method in ['cl']:
-    # for method in ['none', 'cl', 'jaccard', 'overlap']:
+    # for method in ['cl', 'jaccard', 'overlap']:
         result_tables = []
-        for tid_a in tqdm(query_tables):
-            best_table = query_tables[tid_a]
+        for query_tid in tqdm(query_tables):
+            best_table = query_tables[query_tid]
             if method == 'none':
-                candidate_joins[method][tid_a] = best_table
+                candidate_joins[method][query_tid] = best_table
                 continue
 
             best_similarity = -1.0
             best_pair = None
-            table_a = query_tables[tid_a]
-            vectors_a = query_vectors[tid_a]
+            base_table = query_tables[query_tid]
+            vectors_base_table = query_vectors[query_tid]
 
-            for tid_b in tables:
-                table_b = tables[tid_b]
-                vectors_b = table_vectors[tid_b]
+            for candidate_tid in tables:
+                cand_table = tables[candidate_tid]
+                vectors_cand_table = table_vectors[candidate_tid]
 
-                res, similarity = check_table_pair(table_a, vectors_a,
-                                table_b, vectors_b, method=method)
+                res, similarity = check_table_pair(base_table, vectors_base_table,
+                                cand_table, vectors_cand_table, method=method)
                 if res is not None and similarity > 0:
-                    candidate_joins[method].append({"cand_table": tid_b, "join_columns": res, "similarity": similarity})                    
+                    candidate_joins[method].append({"cand_table": candidate_tid, "join_columns": res, "similarity": similarity})                    
                 
                 if res is not None and similarity > best_similarity:
                     best_similarity = similarity
-                    best_table = table_b
+                    best_table = cand_table
                     best_pair = res
             candidates = pd.DataFrame().from_records(candidate_joins[method]).sort_values("similarity", ascending=False)
-            out_path = Path("results", case, "query-results_%s_%s.parquet"% (method, tid_a))
+            out_path = Path("results", case, "query-results_%s_%s.parquet"% (method, query_tid))
             candidates.to_parquet(out_path, index=False)
             # candidates.to_csv(out_path, index=False)
             if best_similarity >= 0:
                 result_tables.append({"cand_table": best_table, "best_pair": best_pair, "similarity": best_similarity})
-        pickle.dump(result_tables, open('%s_joined_tables.pkl' % method, 'wb'))
-        # process_query_tables(result_tables)
+        pickle.dump(result_tables, open('%s_result_tables.pkl' % method, 'wb'))
