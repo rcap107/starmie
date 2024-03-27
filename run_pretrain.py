@@ -6,6 +6,7 @@ import mlflow
 
 from sdd.dataset import PretrainTableDataset
 from sdd.pretrain import train
+from sdd.retrieval_logger import SimpleIndexLogger
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -68,6 +69,17 @@ if __name__ == '__main__':
     #                      size=hp.size,
     #                      single_column=hp.single_column,
     #                      sample_meth=hp.sample_meth)
+    
+    logger = SimpleIndexLogger(
+        "starmie",
+        "create",
+        hp.task,
+        index_parameters=vars(hp)
+    )
+    
+    logger.start_time("create")
     trainset = PretrainTableDataset.from_hp(path, hp)
 
     train(trainset, hp)
+    logger.end_time("create")
+    logger.to_logfile()

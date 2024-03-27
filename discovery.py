@@ -7,6 +7,8 @@ from pathlib import Path
 
 
 from sdd.pretrain import load_checkpoint, inference_on_tables
+from sdd.retrieval_logger import SimpleIndexLogger
+
 
 from sentence_transformers import SentenceTransformer
 from xgboost import XGBRegressor
@@ -120,8 +122,17 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
 
 if __name__ == '__main__':
     # step 1: load columns and vectors
-    case=  "yadl/binary_update"
+    data_lake_version = "binary_update"
+    case=  f"yadl/{data_lake_version}"
     base_path = Path("data/", case)
+
+    logger = SimpleIndexLogger(
+        "starmie",
+        "query",
+        data_lake_version=data_lake_version, 
+        index_parameters={},
+        log_path="results/query_logging.txt"
+    )
 
     tables_data_path = Path(base_path, 'datalake_tables.pkl')
     query_data_path = Path(base_path, 'query_tables.pkl')
@@ -141,9 +152,12 @@ if __name__ == '__main__':
     # step 2: select data lake tables
     if tables_data_path.exists():
     # if False:
+        logger.start_time("load")
         tables, table_vectors = pickle.load(open(tables_data_path, 'rb'))
         query_tables, query_vectors = pickle.load(open(query_data_path, 'rb'))
+        logger.end_time("load")
     else:
+        logger.start_time("load")
         tables = {}
         tot = sum(1 for _ in base_path.glob("**/*.parquet"))
         for t_path in tqdm(base_path.glob("**/*.parquet"), total=tot):
@@ -173,6 +187,10 @@ if __name__ == '__main__':
         for tid, v in zip(query_tables, v_):
             query_vectors[tid] = v
         pickle.dump((query_tables, query_vectors), open(query_data_path, 'wb'))
+        logger.end_time("load")
+    
+    logger.to_logfile()
+
 
 
     # step 4: run each data discovery method
@@ -181,6 +199,14 @@ if __name__ == '__main__':
     # for method in ['cl', 'jaccard', 'overlap']:
         result_tables = []
         for query_tid in tqdm(query_tables):
+            logger = SimpleIndexLogger(
+                "starmie",
+                "query",
+                data_lake_version=data_lake_version, 
+                index_parameters={},
+                log_path="results/query_logging.txt"
+            )
+
             best_table = query_tables[query_tid]
             if method == 'none':
                 candidate_joins[method][query_tid] = best_table
@@ -190,7 +216,9 @@ if __name__ == '__main__':
             best_pair = None
             base_table = query_tables[query_tid]
             vectors_base_table = query_vectors[query_tid]
-
+            
+            logger.update_query_parameters(query_tid, "")
+            logger.start_time("query")
             for candidate_tid in tables:
                 cand_table = tables[candidate_tid]
                 vectors_cand_table = table_vectors[candidate_tid]
@@ -210,4 +238,6 @@ if __name__ == '__main__':
             # candidates.to_csv(out_path, index=False)
             if best_similarity >= 0:
                 result_tables.append({"cand_table": best_table, "best_pair": best_pair, "similarity": best_similarity})
-        pickle.dump(result_tables, open('%s_result_tables.pkl' % method, 'wb'))
+            logger.end_time("query")
+            logger.to_logfile()
+        pickle.dump(result_tables, open('%s_%s_result_tables.pkl' % (query_tid, method), 'wb'))
