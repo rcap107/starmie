@@ -175,6 +175,9 @@ def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, me
     return prepared_candidates
 
 if __name__ == '__main__':
+    # Set to True to profile memory. This will disable parallelism. 
+    profile_memory = False
+    
     # step 1: load columns and vectors
     data_lake_version = "binary_update"
     case=  f"yadl/{data_lake_version}"
