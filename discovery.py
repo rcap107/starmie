@@ -9,6 +9,7 @@ from pathlib import Path
 from sdd.pretrain import load_checkpoint, inference_on_tables
 from sdd.retrieval_logger import SimpleIndexLogger
 
+from memory_profiler import memory_usage
 
 from sentence_transformers import SentenceTransformer
 from xgboost import XGBRegressor
@@ -34,8 +35,9 @@ def clean_table(table, target='Rating'):
     return table.dropna(subset=[target])
 
 
-lm = SentenceTransformer('paraphrase-MiniLM-L6-v2')
-# lm = SentenceTransformer('paraphrase-MiniLM-L6-v2').to('cuda')
+# lm = SentenceTransformer('paraphrase-MiniLM-L6-v2')
+device = "cuda" if torch.cuda.is_available() else "cpu"
+lm = SentenceTransformer('paraphrase-MiniLM-L6-v2').to(device)
 lm.eval()
 
 def featurize(table, target='Rating'):
@@ -120,6 +122,58 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
     return best_pair, max_score
 
 
+def profile_inference(base_path, tables_data_path, query_paths, query_data_path):
+    datalake_tables = {}
+    tot = sum(1 for _ in base_path.glob("**/*.parquet"))
+    for t_path in tqdm(base_path.glob("**/*.parquet"), total=tot):
+        # get table length
+        table = pd.read_parquet(t_path)
+        if len(table) >= 50:
+            datalake_tables[t_path.stem] = table
+
+    datalake_table_vectors = {}
+    ckpt_path = "results/%s/model_drop_col_head_column_0.pt" % case
+    ckpt = torch.load(ckpt_path)
+    table_model, table_dataset = load_checkpoint(ckpt)
+    all_tables = list(datalake_tables.values())
+    v_ = inference_on_tables(all_tables, table_model, table_dataset)
+    for tid, v in zip(datalake_tables, v_):
+        datalake_table_vectors[tid] = v
+
+    pickle.dump((datalake_tables, datalake_table_vectors), open(tables_data_path, 'wb'))
+
+    query_tables = {}    
+    for query_table_path in query_paths:
+        if query_table_path.exists():
+            query_table = pd.read_parquet(query_table_path)
+            query_tables[query_table_path.stem] = query_table
+    query_vectors = {}
+    v_ = inference_on_tables(list(query_tables.values()), table_model, table_dataset)
+    for tid, v in zip(query_tables, v_):
+        query_vectors[tid] = v
+    pickle.dump((query_tables, query_vectors), open(query_data_path, 'wb'))
+    
+    return datalake_tables, datalake_table_vectors, query_tables, query_vectors
+
+def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, method):
+    prepared_candidates = []
+    best_similarity = -1.0
+    best_pair = None
+            
+    for candidate_tid in datalake_tables:
+        cand_table = datalake_tables[candidate_tid]
+        vectors_cand_table = datalake_vectors[candidate_tid]
+
+        res, similarity = check_table_pair(base_table, v_base_table,
+                        cand_table, vectors_cand_table, method=method)
+        if res is not None and similarity > 0:
+            prepared_candidates.append({"cand_table": candidate_tid, "join_columns": res, "similarity": similarity})                    
+        
+        if res is not None and similarity > best_similarity:
+            best_similarity = similarity
+        
+    return prepared_candidates
+
 if __name__ == '__main__':
     # step 1: load columns and vectors
     data_lake_version = "binary_update"
@@ -150,43 +204,27 @@ if __name__ == '__main__':
     
     
     # step 2: select data lake tables
-    if tables_data_path.exists():
-    # if False:
+    # if tables_data_path.exists():
+    if False:
+        print("Loading pickle")
         logger.start_time("load")
-        tables, table_vectors = pickle.load(open(tables_data_path, 'rb'))
+        datalake_tables, datalake_vectors = pickle.load(open(tables_data_path, 'rb'))
         query_tables, query_vectors = pickle.load(open(query_data_path, 'rb'))
         logger.end_time("load")
     else:
+        print("Running inference")
         logger.start_time("load")
-        tables = {}
-        tot = sum(1 for _ in base_path.glob("**/*.parquet"))
-        for t_path in tqdm(base_path.glob("**/*.parquet"), total=tot):
-            # get table length
-            table = pd.read_parquet(t_path)
-            if len(table) >= 50:
-                tables[t_path.stem] = table
-
-        table_vectors = {}
-        ckpt_path = "results/%s/model_drop_col_head_column_0.pt" % case
-        ckpt = torch.load(ckpt_path)
-        table_model, table_dataset = load_checkpoint(ckpt)
-        all_tables = list(tables.values())
-        v_ = inference_on_tables(all_tables, table_model, table_dataset)
-        for tid, v in zip(tables, v_):
-            table_vectors[tid] = v
-
-        pickle.dump((tables, table_vectors), open(tables_data_path, 'wb'))
-
-        query_tables = {}    
-        for query_table_path in query_paths:
-            if query_table_path.exists():
-                query_table = pd.read_parquet(query_table_path)
-                query_tables[query_table_path.stem] = query_table
-        query_vectors = {}
-        v_ = inference_on_tables(list(query_tables.values()), table_model, table_dataset)
-        for tid, v in zip(query_tables, v_):
-            query_vectors[tid] = v
-        pickle.dump((query_tables, query_vectors), open(query_data_path, 'wb'))
+        
+        if profile_memory:
+            mem_usage, (datalake_tables, datalake_vectors, query_tables, query_vectors) = memory_usage(
+                (
+                    profile_inference,
+                    (base_path,tables_data_path, query_paths, query_data_path)
+                ), timestamps=True, max_iterations=1, retval=True
+            )
+            logger.mark_memory(mem_usage, "inference")
+        else:
+            datalake_tables, datalake_vectors, query_tables, query_vectors = profile_inference(base_path,tables_data_path, query_paths, query_data_path)
         logger.end_time("load")
     
     logger.to_logfile()
@@ -199,6 +237,7 @@ if __name__ == '__main__':
     # for method in ['cl', 'jaccard', 'overlap']:
         result_tables = []
         for query_tid in tqdm(query_tables):
+            tqdm.write(f"Querying {query_tid}")
             logger = SimpleIndexLogger(
                 "starmie",
                 "query",
@@ -207,37 +246,26 @@ if __name__ == '__main__':
                 log_path="results/query_logging.txt"
             )
 
-            best_table = query_tables[query_tid]
-            if method == 'none':
-                candidate_joins[method][query_tid] = best_table
-                continue
-
-            best_similarity = -1.0
-            best_pair = None
+            
             base_table = query_tables[query_tid]
-            vectors_base_table = query_vectors[query_tid]
+            v_base_table = query_vectors[query_tid]
             
             logger.update_query_parameters(query_tid, "")
             logger.start_time("query")
-            for candidate_tid in tables:
-                cand_table = tables[candidate_tid]
-                vectors_cand_table = table_vectors[candidate_tid]
-
-                res, similarity = check_table_pair(base_table, vectors_base_table,
-                                cand_table, vectors_cand_table, method=method)
-                if res is not None and similarity > 0:
-                    candidate_joins[method].append({"cand_table": candidate_tid, "join_columns": res, "similarity": similarity})                    
-                
-                if res is not None and similarity > best_similarity:
-                    best_similarity = similarity
-                    best_table = cand_table
-                    best_pair = res
-            candidates = pd.DataFrame().from_records(candidate_joins[method]).sort_values("similarity", ascending=False)
+            
+            if profile_memory:            
+                mem_usage, prepared_candidates = memory_usage(
+                    (profile_query, 
+                    (base_table, datalake_tables, datalake_vectors, v_base_table, method)), 
+                    timestamps=True, max_iterations=1, retval=True
+                )
+                logger.mark_memory(mem_usage, "query")
+            else:
+                prepared_candidates = profile_query(base_table, datalake_tables, datalake_vectors, v_base_table, method)
+            candidates = pd.DataFrame().from_records(prepared_candidates).sort_values("similarity", ascending=False)
             out_path = Path("results", case, "query-results_%s_%s.parquet"% (method, query_tid))
             candidates.to_parquet(out_path, index=False)
             # candidates.to_csv(out_path, index=False)
-            if best_similarity >= 0:
-                result_tables.append({"cand_table": best_table, "best_pair": best_pair, "similarity": best_similarity})
             logger.end_time("query")
             logger.to_logfile()
         pickle.dump(result_tables, open('%s_%s_result_tables.pkl' % (query_tid, method), 'wb'))

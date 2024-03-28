@@ -29,8 +29,10 @@ class SimpleIndexLogger:
         self.memory_usage = {
             "create": None,
             "query": None,
+            "inference": None,
             "peak_create": None,
             "peak_query": None,
+            "peak_inference": None,
         }
 
         self.query_results = {"n_candidates": 0}
@@ -48,6 +50,7 @@ class SimpleIndexLogger:
             "time_query",
             "peak_create",
             "peak_query",
+            "peak_inference",
             "n_candidates",
         ]
 
@@ -127,6 +130,7 @@ class SimpleIndexLogger:
             self.durations.get("time_query", 0),
             self.memory_usage.get("peak_create", 0),
             self.memory_usage.get("peak_query", 0),
+            self.memory_usage.get("peak_inference", 0),
             self.query_results.get("n_candidates", 0),
         ]
 

@@ -137,7 +137,7 @@ class PretrainTableDataset(data.Dataset):
         self.path = path
         self.table_extension = table_extension
     
-        # assuming tables are in csv format
+        # reading tables with the given table_extension
         self.tables = [fn for fn in os.listdir(path) if table_extension in fn]
 
         # only keep the first n tables

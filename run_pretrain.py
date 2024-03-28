@@ -4,6 +4,8 @@ import random
 import torch
 import mlflow
 
+from memory_profile import memory_usage
+
 from sdd.dataset import PretrainTableDataset
 from sdd.pretrain import train
 from sdd.retrieval_logger import SimpleIndexLogger
@@ -80,6 +82,15 @@ if __name__ == '__main__':
     logger.start_time("create")
     trainset = PretrainTableDataset.from_hp(path, hp)
 
-    train(trainset, hp)
+    mem_usage = memory_usage(
+        (
+            train, 
+            train(trainset, hp)
+        ),
+            max_iterations=1,
+            timestamps=True        
+    )
+    # train(trainset, hp)
     logger.end_time("create")
+    logger.mark_memory("mem_usage", "create")
     logger.to_logfile()
