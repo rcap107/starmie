@@ -1,8 +1,10 @@
 from argparse import Namespace
 import torch
 import random
+from pathlib import Path
 import pandas as pd
 import os
+import json
 
 from torch.utils import data
 from transformers import AutoTokenizer
@@ -130,15 +132,21 @@ class PretrainTableDataset(data.Dataset):
                  single_column=False,
                  sample_meth='wordProb',
                  table_order='column',
-                 table_extension=".csv",
                  ):
         self.tokenizer = AutoTokenizer.from_pretrained(lm_mp[lm])
         self.max_len = max_len
-        self.path = path
-        self.table_extension = table_extension
-    
-        # reading tables with the given table_extension
-        self.tables = [fn for fn in os.listdir(path) if table_extension in fn]
+        self.path = Path(path)        
+        self.tables = []
+        self.tables_md = {}
+
+        for p in self.path.glob("**/*.json"):
+            with open(p, "r") as fp:
+                mdata = json.load(fp)
+                cnd_path = mdata["full_path"]
+                cnd_hash = mdata["hash"]
+                self.tables.append(cnd_path)
+                self.tables_md[cnd_path] = cnd_hash
+                
 
         # only keep the first n tables
         if size is not None:
@@ -183,7 +191,7 @@ class PretrainTableDataset(data.Dataset):
                          single_column=hp.single_column,
                          sample_meth=hp.sample_meth,
                          table_order=hp.table_order,
-                         table_extension=hp.table_extension)
+                         )
 
 
     def _read_table(self, table_id):
@@ -191,13 +199,14 @@ class PretrainTableDataset(data.Dataset):
         if table_id in self.table_cache:
             table = self.table_cache[table_id]
         else:
-            fn = os.path.join(self.path, self.tables[table_id])
-            if self.table_extension == ".csv":
-                table = pd.read_csv(fn, lineterminator='\n')
-            elif self.table_extension == ".parquet":
-                table = pd.read_parquet(fn, )
-            else:
-                raise ValueError("Invalid extension %s" % self.table_extension)
+            table = pd.read_parquet(self.tables[table_id])
+            # fn = os.path.join(self.path, self.tables[table_id])
+            # if self.table_extension == ".csv":
+            #     table = pd.read_csv(fn, lineterminator='\n')
+            # elif self.table_extension == ".parquet":
+            #     table = pd.read_parquet(fn, )
+            # else:
+            #     raise ValueError("Invalid extension %s" % self.table_extension)
             self.table_cache[table_id] = table
 
         return table

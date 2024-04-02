@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import numpy as np
 import pickle
@@ -9,7 +10,7 @@ from pathlib import Path
 from sdd.pretrain import load_checkpoint, inference_on_tables
 from sdd.retrieval_logger import SimpleIndexLogger
 
-from memory_profiler import memory_usage
+# from memory_profiler import memory_usage
 
 from sentence_transformers import SentenceTransformer
 from xgboost import XGBRegressor
@@ -124,16 +125,21 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
 
 def profile_inference(base_path, tables_data_path, query_paths, query_data_path):
     datalake_tables = {}
-    tot = sum(1 for _ in base_path.glob("**/*.parquet"))
-    for t_path in tqdm(base_path.glob("**/*.parquet"), total=tot):
-        # get table length
-        table = pd.read_parquet(t_path)
-        if len(table) >= 50:
-            datalake_tables[t_path.stem] = table
-
-    datalake_table_vectors = {}
+    print("Loading checkpoint")
     ckpt_path = "results/%s/model_drop_col_head_column_0.pt" % case
     ckpt = torch.load(ckpt_path)
+
+    tot = sum(1 for _ in base_path.glob("**/*.json"))
+    for p in tqdm(base_path.glob("**/*.json"), total=tot):
+        with open(p, "r") as fp:
+            mdata = json.load(fp)
+            cnd_path = mdata["full_path"]
+            cnd_hash = mdata["hash"]
+            table = pd.read_parquet(cnd_path)
+            if len(table) >= 50:
+                datalake_tables[cnd_hash] = table
+
+    datalake_table_vectors = {}
     table_model, table_dataset = load_checkpoint(ckpt)
     all_tables = list(datalake_tables.values())
     v_ = inference_on_tables(all_tables, table_model, table_dataset)
@@ -179,9 +185,9 @@ if __name__ == '__main__':
     profile_memory = False
     
     # step 1: load columns and vectors
-    data_lake_version = "binary_update"
+    data_lake_version = "wordnet_full"
     case=  f"yadl/{data_lake_version}"
-    base_path = Path("data/", case)
+    base_path = Path("data/metadata", data_lake_version)
 
     logger = SimpleIndexLogger(
         "starmie",
@@ -249,7 +255,6 @@ if __name__ == '__main__':
                 log_path="results/query_logging.txt"
             )
 
-            
             base_table = query_tables[query_tid]
             v_base_table = query_vectors[query_tid]
             
@@ -266,7 +271,7 @@ if __name__ == '__main__':
             else:
                 prepared_candidates = profile_query(base_table, datalake_tables, datalake_vectors, v_base_table, method)
             candidates = pd.DataFrame().from_records(prepared_candidates).sort_values("similarity", ascending=False)
-            out_path = Path("results", case, "query-results_%s_%s.parquet"% (method, query_tid))
+            out_path = Path("results", case, "starmie-%s_%s.parquet"% (method, query_tid))
             candidates.to_parquet(out_path, index=False)
             # candidates.to_csv(out_path, index=False)
             logger.end_time("query")
