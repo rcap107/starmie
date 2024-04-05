@@ -6,6 +6,10 @@ import torch
 import os
 from pathlib import Path
 
+import random
+random.seed(42)
+from line_profiler import profile
+
 
 from sdd.pretrain import load_checkpoint, inference_on_tables
 from sdd.retrieval_logger import SimpleIndexLogger
@@ -77,8 +81,8 @@ def process_query_tables(query_tables):
         # print(len(table), mean_squared_error(y, y_pred))
         print(mean_squared_error(y, y_pred))
 
-
-def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', target='Rating'):
+@profile
+def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', target='target'):
     """Check if two tables are joinable. Return the join result and the similarity score
     """
     best_pair = None
@@ -86,28 +90,29 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
     target_sim = 0.0
 
     for col_a, vec_a in zip(table_a, vectors_a):
+        norm_vec_a = np.linalg.norm(vec_a)
         if col_a == target:
             if method == 'cl':
                 for col_b, vec_b in zip(table_b, vectors_b):
                     if table_a[col_a].dtype != table_b[col_b].dtype:
                         continue
-                    sim = np.dot(vec_a, vec_b) / np.linalg.norm(vec_a) / np.linalg.norm(vec_b)
+                    sim = np.dot(vec_a, vec_b) / norm_vec_a / np.linalg.norm(vec_b)
                     # if sim > 0:
                     target_sim += sim
             else:
                 continue
-        seta = set(table_a[col_a])
+        seta = set(table_a[col_a].unique())
 
         for col_b, vec_b in zip(table_b, vectors_b):
             if table_a[col_a].dtype != table_b[col_b].dtype:
                 continue
-            setb = set(table_b[col_b])
+            setb = set(table_b[col_b].unique())
             if method == 'jaccard':
                 score = len(seta.intersection(setb)) / len(seta.union(setb))
             elif method == 'cl':
                 overlap = len(seta.intersection(setb)) # / len(seta.union(setb))
                 # score = float(overlap >= 10) * np.dot(vec_a, vec_b) / np.linalg.norm(vec_a) / np.linalg.norm(vec_b)
-                score = float(overlap) * (1.0 + np.dot(vec_a, vec_b) / np.linalg.norm(vec_a) / np.linalg.norm(vec_b))
+                score = float(overlap) * (1.0 + np.dot(vec_a, vec_b) / norm_vec_a / np.linalg.norm(vec_b))
             elif method == 'overlap':
                 score = len(seta.intersection(setb)) / len(seta)
             else:
@@ -126,11 +131,11 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
 def profile_inference(base_path, tables_data_path, query_paths, query_data_path):
     datalake_tables = {}
     print("Loading checkpoint")
-    ckpt_path = "results/%s/model_drop_col_head_column_0.pt" % case
+    ckpt_path = f"results/metadata/{base_path.stem}/model_drop_col_head_column_0.pt"
     ckpt = torch.load(ckpt_path)
 
     tot = sum(1 for _ in base_path.glob("**/*.json"))
-    for p in tqdm(base_path.glob("**/*.json"), total=tot):
+    for p in tqdm(base_path.glob("**/*.json"), total=tot, desc="Reading metadata: "):
         with open(p, "r") as fp:
             mdata = json.load(fp)
             cnd_path = mdata["full_path"]
@@ -161,12 +166,17 @@ def profile_inference(base_path, tables_data_path, query_paths, query_data_path)
     
     return datalake_tables, datalake_table_vectors, query_tables, query_vectors
 
+# @profile
 def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, method):
     prepared_candidates = []
     best_similarity = -1.0
     best_pair = None
+        
+    subsample_keys = random.choices(list(datalake_tables.keys()), k=100)
+
             
-    for candidate_tid in datalake_tables:
+    # for candidate_tid in tqdm(datalake_tables, total=len(datalake_tables), desc="Candidate: ", position=1, leave=False):
+    for candidate_tid in tqdm(subsample_keys, total=100, desc="Candidate: ", position=1, leave=False):
         cand_table = datalake_tables[candidate_tid]
         vectors_cand_table = datalake_vectors[candidate_tid]
 
@@ -185,8 +195,8 @@ if __name__ == '__main__':
     profile_memory = False
     
     # step 1: load columns and vectors
-    data_lake_version = "wordnet_full"
-    case=  f"yadl/{data_lake_version}"
+    data_lake_version = "wordnet_vldb_3"
+    case=  f"metadata/{data_lake_version}"
     base_path = Path("data/metadata", data_lake_version)
 
     logger = SimpleIndexLogger(
@@ -213,8 +223,8 @@ if __name__ == '__main__':
     
     
     # step 2: select data lake tables
-    # if tables_data_path.exists():
-    if False:
+    if tables_data_path.exists():
+    # if False:
         print("Loading pickle")
         logger.start_time("load")
         datalake_tables, datalake_vectors = pickle.load(open(tables_data_path, 'rb'))
@@ -233,7 +243,14 @@ if __name__ == '__main__':
             )
             logger.mark_memory(mem_usage, "inference")
         else:
-            datalake_tables, datalake_vectors, query_tables, query_vectors = profile_inference(base_path,tables_data_path, query_paths, query_data_path)
+            (
+                datalake_tables, 
+                datalake_vectors, 
+                query_tables, 
+                query_vectors
+                ) = profile_inference(
+                base_path,tables_data_path, query_paths, query_data_path
+                )
         logger.end_time("load")
     
     logger.to_logfile()
@@ -276,4 +293,5 @@ if __name__ == '__main__':
             # candidates.to_csv(out_path, index=False)
             logger.end_time("query")
             logger.to_logfile()
+            break
         pickle.dump(result_tables, open('%s_%s_result_tables.pkl' % (query_tid, method), 'wb'))
