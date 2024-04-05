@@ -175,8 +175,8 @@ def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, me
     subsample_keys = random.choices(list(datalake_tables.keys()), k=100)
 
             
-    # for candidate_tid in tqdm(datalake_tables, total=len(datalake_tables), desc="Candidate: ", position=1, leave=False):
-    for candidate_tid in tqdm(subsample_keys, total=100, desc="Candidate: ", position=1, leave=False):
+    for candidate_tid in tqdm(datalake_tables, total=len(datalake_tables), desc="Candidate: ", position=1, leave=False):
+    # for candidate_tid in tqdm(subsample_keys, total=100, desc="Candidate: ", position=1, leave=False):
         cand_table = datalake_tables[candidate_tid]
         vectors_cand_table = datalake_vectors[candidate_tid]
 
@@ -293,5 +293,4 @@ if __name__ == '__main__':
             # candidates.to_csv(out_path, index=False)
             logger.end_time("query")
             logger.to_logfile()
-            break
         pickle.dump(result_tables, open('%s_%s_result_tables.pkl' % (query_tid, method), 'wb'))
