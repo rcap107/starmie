@@ -240,10 +240,17 @@ class PretrainTableDataset(data.Dataset):
                         ' '.join(tokens[:max_tokens]) + " "
 
                 column_mp[column] = len(res)
-                res += self.tokenizer.encode(text=col_text,
+                tokenized = self.tokenizer.encode(text=col_text,
                                         max_length=budget,
                                         add_special_tokens=False,
                                         truncation=True)
+                
+                if len(tokenized) + len(res) <= self.max_len:
+                    res += tokenized
+                else:
+                    reached_max_len = True
+                    break
+
         else:
             # row-ordered preprocessing
             reached_max_len = False
