@@ -14,7 +14,7 @@ from line_profiler import profile
 from sdd.pretrain import load_checkpoint, inference_on_tables
 from sdd.retrieval_logger import SimpleIndexLogger
 
-# from memory_profiler import memory_usage
+from memory_profiler import memory_usage
 
 from sentence_transformers import SentenceTransformer
 from xgboost import XGBRegressor
@@ -133,26 +133,28 @@ def profile_inference(base_path, tables_data_path, query_paths, query_data_path)
     print("Loading checkpoint")
     ckpt_path = f"results/metadata/{base_path.stem}/model_drop_col_head_column_0.pt"
     ckpt = torch.load(ckpt_path)
-
-    tot = sum(1 for _ in base_path.glob("**/*.json"))
-    for p in tqdm(base_path.glob("**/*.json"), total=tot, desc="Reading metadata: "):
-        with open(p, "r") as fp:
-            mdata = json.load(fp)
-            cnd_path = mdata["full_path"]
-            cnd_hash = mdata["hash"]
-            table = pd.read_parquet(cnd_path)
-            if len(table) >= 50:
-                datalake_tables[cnd_hash] = table
-
-    datalake_table_vectors = {}
     table_model, table_dataset = load_checkpoint(ckpt)
-    all_tables = list(datalake_tables.values())
-    v_ = inference_on_tables(all_tables, table_model, table_dataset)
-    for tid, v in zip(datalake_tables, v_):
-        datalake_table_vectors[tid] = v
 
-    pickle.dump((datalake_tables, datalake_table_vectors), open(tables_data_path, 'wb'))
+    if not Path(tables_data_path).exists():
+        tot = sum(1 for _ in base_path.glob("**/*.json"))
+        for p in tqdm(base_path.glob("**/*.json"), total=tot, desc="Reading metadata: "):
+            with open(p, "r") as fp:
+                mdata = json.load(fp)
+                cnd_path = mdata["full_path"]
+                cnd_hash = mdata["hash"]
+                table = pd.read_parquet(cnd_path)
+                if len(table) >= 50:
+                    datalake_tables[cnd_hash] = table
 
+        datalake_table_vectors = {}
+        all_tables = list(datalake_tables.values())
+        v_ = inference_on_tables(all_tables, table_model, table_dataset)
+        for tid, v in zip(datalake_tables, v_):
+            datalake_table_vectors[tid] = v
+
+        pickle.dump((datalake_tables, datalake_table_vectors), open(tables_data_path, 'wb'))
+    else:
+        datalake_tables, datalake_table_vectors = pickle.load(open(tables_data_path, 'rb'))
     query_tables = {}    
     for query_table_path in query_paths:
         if query_table_path.exists():
@@ -163,7 +165,7 @@ def profile_inference(base_path, tables_data_path, query_paths, query_data_path)
     for tid, v in zip(query_tables, v_):
         query_vectors[tid] = v
     pickle.dump((query_tables, query_vectors), open(query_data_path, 'wb'))
-    
+
     return datalake_tables, datalake_table_vectors, query_tables, query_vectors
 
 # @profile
@@ -195,7 +197,8 @@ if __name__ == '__main__':
     profile_memory = False
     
     # step 1: load columns and vectors
-    data_lake_version = "wordnet_vldb_3"
+    data_lake_version = "wordnet_full"
+    print(f"Working on data lake {data_lake_version}")
     case=  f"metadata/{data_lake_version}"
     base_path = Path("data/metadata", data_lake_version)
 
@@ -211,51 +214,47 @@ if __name__ == '__main__':
     query_data_path = Path(base_path, 'query_tables.pkl')
     
     query_paths = [
-        "data/source_tables/yadl/company_employees-yadl-depleted.parquet",
-        "data/source_tables/yadl/housing_prices-yadl-depleted.parquet",
-        "data/source_tables/yadl/movies_vote-yadl-depleted.parquet",
-        "data/source_tables/yadl/movies-yadl-depleted.parquet",
-        "data/source_tables/yadl/us_accidents-yadl-depleted.parquet",
-        "data/source_tables/yadl/us_county_population-yadl-depleted.parquet",
-        "data/source_tables/yadl/us_elections-yadl-depleted.parquet",
+        "data/source_tables/yadl/movies_vote_large-yadl-depleted.parquet",
+        "data/source_tables/yadl/movies_large-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_accidents_2021-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_accidents_large-yadl-depleted.parquet",
     ]
+    # query_paths = [
+    #     "data/source_tables/yadl/company_employees-yadl-depleted.parquet",
+    #     "data/source_tables/yadl/housing_prices-yadl-depleted.parquet",
+    #     "data/source_tables/yadl/movies_vote-yadl-depleted.parquet",
+    #     "data/source_tables/yadl/movies-yadl-depleted.parquet",
+    #     "data/source_tables/yadl/us_accidents-yadl-depleted.parquet",
+    #     "data/source_tables/yadl/us_county_population-yadl-depleted.parquet",
+    #     "data/source_tables/yadl/us_elections-yadl-depleted.parquet",
+    # ]
     query_paths = list(map(Path, query_paths))
     
     
     # step 2: select data lake tables
-    if tables_data_path.exists():
-    # if False:
-        print("Loading pickle")
-        logger.start_time("load")
-        datalake_tables, datalake_vectors = pickle.load(open(tables_data_path, 'rb'))
-        query_tables, query_vectors = pickle.load(open(query_data_path, 'rb'))
-        logger.end_time("load")
-    else:
-        print("Running inference")
-        logger.start_time("load")
-        
-        if profile_memory:
-            mem_usage, (datalake_tables, datalake_vectors, query_tables, query_vectors) = memory_usage(
-                (
-                    profile_inference,
-                    (base_path,tables_data_path, query_paths, query_data_path)
-                ), timestamps=True, max_iterations=1, retval=True
-            )
-            logger.mark_memory(mem_usage, "inference")
-        else:
+    print("Running inference")
+    logger.start_time("load")
+    
+    if profile_memory:
+        mem_usage, (datalake_tables, datalake_vectors, query_tables, query_vectors) = memory_usage(
             (
-                datalake_tables, 
-                datalake_vectors, 
-                query_tables, 
-                query_vectors
-                ) = profile_inference(
-                base_path,tables_data_path, query_paths, query_data_path
-                )
-        logger.end_time("load")
+                profile_inference,
+                (base_path,tables_data_path, query_paths, query_data_path)
+            ), timestamps=True, max_iterations=1, retval=True
+        )
+        logger.mark_memory(mem_usage, "inference")
+    else:
+        (
+            datalake_tables, 
+            datalake_vectors, 
+            query_tables, 
+            query_vectors
+            ) = profile_inference(
+            base_path,tables_data_path, query_paths, query_data_path
+            )
+    logger.end_time("load")
     
     logger.to_logfile()
-
-
 
     # step 4: run each data discovery method
     candidate_joins = {"cl":[], "jaccard": [], "overlap": []}
