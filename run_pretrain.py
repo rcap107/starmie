@@ -4,7 +4,7 @@ import random
 import torch
 import mlflow
 
-# from memory_profiler import memory_usage
+from memory_profiler import memory_usage
 
 from sdd.dataset import PretrainTableDataset
 from sdd.pretrain import train
@@ -82,15 +82,15 @@ if __name__ == '__main__':
     logger.start_time("create")
     trainset = PretrainTableDataset.from_hp(path, hp)
 
-    # mem_usage = memory_usage(
-    #     (
-    #         train, 
-    #         (trainset, hp)
-    #     ),
-    #         max_iterations=1,
-    #         timestamps=True        
-    # )
-    train(trainset, hp)
+    mem_usage = memory_usage(
+        (
+            train, 
+            (trainset, hp)
+        ),
+            max_iterations=1,
+            timestamps=True        
+    )
+    # train(trainset, hp)
     logger.end_time("create")
-    logger.mark_memory("mem_usage", "create")
+    logger.mark_memory(mem_usage, "create")
     logger.to_logfile()
