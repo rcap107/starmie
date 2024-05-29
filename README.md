@@ -1,4 +1,19 @@
+Note on this fork
+===
+This repository is a fork of the original Starmie repository that was adapted to be used as baseline in the pipeline introduced in
+the paper "Retrieve, Merge, Predict: Augmenting Tables with Data Lakes" (main 
+repo available [here](https://github.com/rcap107/retrieve-merge-predict)).
+
+The modifications involve mostly the addition
+of code for profiling the performance of the discovery step (time and RAM), and the implementation of interfaces for 
+loading new data lake variants and exporting the query results. 
+
+The internals of Starmie have not been modified to alter, with the exception of 
+an update to how set similarity is measured. 
+
 # Semantics-aware Dataset Discovery from Data Lakes with Contextualized Column-based Representation Learning
+This 
+
 
 ![The overall architecture of Starmie](starmie_overall.jpg)
 
