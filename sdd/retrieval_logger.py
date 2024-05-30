@@ -33,6 +33,7 @@ class SimpleIndexLogger:
             "peak_create": None,
             "peak_query": None,
             "peak_inference": None,
+            "peak_load": None,
         }
 
         self.query_results = {"n_candidates": 0}
