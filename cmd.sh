@@ -1,5 +1,5 @@
-CUDA_VISIBLE_DEVICES=7 python run_pretrain.py \
-  --task small \
+python run_pretrain.py \
+  --task "metadata/wordnet_vldb_10" \
   --batch_size 64 \
   --lr 5e-5 \
   --lm roberta \
@@ -12,4 +12,5 @@ CUDA_VISIBLE_DEVICES=7 python run_pretrain.py \
   --fp16 \
   --sample_meth head \
   --table_order column \
-  --run_id 0
+  --run_id 0 \
+  --table_extension ".parquet"
