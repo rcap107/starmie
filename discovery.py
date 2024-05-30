@@ -8,7 +8,6 @@ from pathlib import Path
 
 import random
 random.seed(42)
-from line_profiler import profile
 
 
 from sdd.pretrain import load_checkpoint, inference_on_tables
@@ -81,7 +80,6 @@ def process_query_tables(query_tables):
         # print(len(table), mean_squared_error(y, y_pred))
         print(mean_squared_error(y, y_pred))
 
-@profile
 def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', target='target'):
     """Check if two tables are joinable. Return the join result and the similarity score
     """
@@ -128,6 +126,7 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
     return best_pair, max_score
 
 
+
 def profile_inference(base_path, tables_data_path, query_paths, query_data_path):
     datalake_tables = {}
     print("Loading checkpoint")
@@ -168,7 +167,6 @@ def profile_inference(base_path, tables_data_path, query_paths, query_data_path)
 
     return datalake_tables, datalake_table_vectors, query_tables, query_vectors
 
-# @profile
 def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, method):
     prepared_candidates = []
     best_similarity = -1.0
@@ -194,10 +192,10 @@ def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, me
 
 if __name__ == '__main__':
     # Set to True to profile memory. This will disable parallelism. 
-    profile_memory = False
+    profile_memory = True
     
     # step 1: load columns and vectors
-    data_lake_version = "wordnet_full"
+    data_lake_version = "binary_update"
     print(f"Working on data lake {data_lake_version}")
     case=  f"metadata/{data_lake_version}"
     base_path = Path("data/metadata", data_lake_version)
@@ -214,7 +212,6 @@ if __name__ == '__main__':
     query_data_path = Path(base_path, 'query_tables.pkl')
     
     query_paths = [
-        "data/source_tables/yadl/movies_vote_large-yadl-depleted.parquet",
         "data/source_tables/yadl/movies_large-yadl-depleted.parquet",
         "data/source_tables/yadl/us_accidents_2021-yadl-depleted.parquet",
         "data/source_tables/yadl/us_accidents_large-yadl-depleted.parquet",
