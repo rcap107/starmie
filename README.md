@@ -12,8 +12,6 @@ The internals of Starmie have not been modified to alter, with the exception of
 an update to how set similarity is measured. 
 
 # Semantics-aware Dataset Discovery from Data Lakes with Contextualized Column-based Representation Learning
-This 
-
 
 ![The overall architecture of Starmie](starmie_overall.jpg)
 
