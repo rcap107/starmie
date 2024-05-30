@@ -9,4 +9,12 @@ jsonlines==1.2.0
 nltk==3.4.5
 torch==1.9.0+cu111
 tqdm==4.41.0
-transformers==4.9.2
+transformers>=4.9.2
+setuptools<50
+packaging
+mlflow
+xgboost
+scikit-learn
+pyarrow
+sentence_transformers==1.2.1
+memory-profiler
