@@ -1,3 +1,4 @@
+import argparse
 import json
 import pandas as pd
 import numpy as np
@@ -6,20 +7,23 @@ import torch
 import os
 from pathlib import Path
 
-import random
-random.seed(42)
-
-
 from sdd.pretrain import load_checkpoint, inference_on_tables
 from sdd.retrieval_logger import SimpleIndexLogger
 
 from memory_profiler import memory_usage
 
 from sentence_transformers import SentenceTransformer
-from xgboost import XGBRegressor
-from sklearn.metrics import mean_squared_error
 from tqdm import tqdm
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile_memory", action="store_true", 
+                        help="""Profile the RAM usage throughout the discovery step. 
+                        This disables some parallelism and therefore affects the runtime.""")
+    parser.add_argument("data_lake_version", action="store", help="YADL version to be used for discovery.")
+    
+    return parser.parse_args()
+    
 def clean_table(table, target='Rating'):
     """Clean an input table.
     """
@@ -60,25 +64,6 @@ def featurize(table, target='Rating'):
 
     return np.concatenate(all_vectors, axis=1), np.array(table[target])
 
-def process_query_tables(query_tables):
-    """Run ML on a dictionary of query tables.
-    """
-    for table in query_tables.values():
-        N = len(table)
-        table['Rating'] = (table['Rating'] - table['Rating'].min()) / (table['Rating'].max() - table['Rating'].min() + 1e-6)
-        # table['Rating'] = table['Rating'] / (table['Rating'].max() + 1e-6)
-        table = table.sample(frac=1.0, random_state=42)
-        train = table[:N//5*4]
-        test = table[N//5*4:]
-
-        x, y = featurize(train)
-        model = XGBRegressor()
-        model.fit(x, y)
-
-        x, y = featurize(test)
-        y_pred = model.predict(x)
-        # print(len(table), mean_squared_error(y, y_pred))
-        print(mean_squared_error(y, y_pred))
 
 def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', target='target'):
     """Check if two tables are joinable. Return the join result and the similarity score
@@ -108,7 +93,8 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
             if method == 'jaccard':
                 score = len(seta.intersection(setb)) / len(seta.union(setb))
             elif method == 'cl':
-                overlap = len(seta.intersection(setb)) # / len(seta.union(setb))
+                overlap = len(seta.intersection(setb)) # / len(seta)
+                # overlap = len(seta.intersection(setb))  / len(seta)
                 # score = float(overlap >= 10) * np.dot(vec_a, vec_b) / np.linalg.norm(vec_a) / np.linalg.norm(vec_b)
                 score = float(overlap) * (1.0 + np.dot(vec_a, vec_b) / norm_vec_a / np.linalg.norm(vec_b))
             elif method == 'overlap':
@@ -124,7 +110,6 @@ def check_table_pair(table_a, vectors_a, table_b, vectors_b, method='naive', tar
         max_score *= target_sim
 
     return best_pair, max_score
-
 
 
 def profile_inference(base_path, tables_data_path, query_paths, query_data_path):
@@ -170,13 +155,8 @@ def profile_inference(base_path, tables_data_path, query_paths, query_data_path)
 def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, method):
     prepared_candidates = []
     best_similarity = -1.0
-    best_pair = None
-        
-    subsample_keys = random.choices(list(datalake_tables.keys()), k=100)
 
-            
     for candidate_tid in tqdm(datalake_tables, total=len(datalake_tables), desc="Candidate: ", position=1, leave=False):
-    # for candidate_tid in tqdm(subsample_keys, total=100, desc="Candidate: ", position=1, leave=False):
         cand_table = datalake_tables[candidate_tid]
         vectors_cand_table = datalake_vectors[candidate_tid]
 
@@ -191,11 +171,11 @@ def profile_query(base_table,datalake_tables, datalake_vectors, v_base_table, me
     return prepared_candidates
 
 if __name__ == '__main__':
-    # Set to True to profile memory. This will disable parallelism. 
-    profile_memory = True
-    
+    args = parse_args()
+    profile_memory = args.profile_memory
+
     # step 1: load columns and vectors
-    data_lake_version = "binary_update"
+    data_lake_version = args.data_lake_version
     print(f"Working on data lake {data_lake_version}")
     case=  f"metadata/{data_lake_version}"
     base_path = Path("data/metadata", data_lake_version)
@@ -215,18 +195,12 @@ if __name__ == '__main__':
         "data/source_tables/yadl/movies_large-yadl-depleted.parquet",
         "data/source_tables/yadl/us_accidents_2021-yadl-depleted.parquet",
         "data/source_tables/yadl/us_accidents_large-yadl-depleted.parquet",
+        "data/source_tables/yadl/company_employees-yadl-depleted.parquet",
+        "data/source_tables/yadl/housing_prices-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_county_population-yadl-depleted.parquet",
+        "data/source_tables/yadl/us_elections-yadl-depleted.parquet",
     ]
-    # query_paths = [
-    #     "data/source_tables/yadl/company_employees-yadl-depleted.parquet",
-    #     "data/source_tables/yadl/housing_prices-yadl-depleted.parquet",
-    #     "data/source_tables/yadl/movies_vote-yadl-depleted.parquet",
-    #     "data/source_tables/yadl/movies-yadl-depleted.parquet",
-    #     "data/source_tables/yadl/us_accidents-yadl-depleted.parquet",
-    #     "data/source_tables/yadl/us_county_population-yadl-depleted.parquet",
-    #     "data/source_tables/yadl/us_elections-yadl-depleted.parquet",
-    # ]
     query_paths = list(map(Path, query_paths))
-    
     
     # step 2: select data lake tables
     print("Running inference")
@@ -284,9 +258,10 @@ if __name__ == '__main__':
             else:
                 prepared_candidates = profile_query(base_table, datalake_tables, datalake_vectors, v_base_table, method)
             candidates = pd.DataFrame().from_records(prepared_candidates).sort_values("similarity", ascending=False)
-            out_path = Path("results", case, "starmie-%s_%s.parquet"% (method, query_tid))
+            out_path = Path("results", case, "starmie-%s_%s-cont.parquet"% (method, query_tid))
+            # out_path = Path("results", case, "starmie-%s_%s-cont.parquet"% (method, query_tid))
             candidates.to_parquet(out_path, index=False)
-            # candidates.to_csv(out_path, index=False)
+
             logger.end_time("query")
             logger.to_logfile()
         pickle.dump(result_tables, open('%s_%s_result_tables.pkl' % (query_tid, method), 'wb'))
