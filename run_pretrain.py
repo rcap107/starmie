@@ -61,16 +61,8 @@ if __name__ == '__main__':
         path = 'data/table-union-search-benchmark/small/benchmark'
         if hp.task == "tusLarge":
             path = 'data/table-union-search-benchmark/large/benchmark'
-
     else:
         path = 'data/%s' % hp.task
-    # trainset = PretrainTableDataset(path,
-    #                      augment_op=hp.augment_op,
-    #                      lm=hp.lm,
-    #                      max_len=hp.max_len,
-    #                      size=hp.size,
-    #                      single_column=hp.single_column,
-    #                      sample_meth=hp.sample_meth)
     
     logger = SimpleIndexLogger(
         "starmie",
@@ -90,7 +82,6 @@ if __name__ == '__main__':
             max_iterations=1,
             timestamps=True        
     )
-    # train(trainset, hp)
     logger.end_time("create")
     logger.mark_memory(mem_usage, "create")
     logger.to_logfile()
